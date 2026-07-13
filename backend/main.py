@@ -53,7 +53,7 @@ async def ai_reply(question: str) -> str:
     """Call Groq only if /ai command is used."""
     try:
         from langchain_groq import ChatGroq
-        from langchain.schema import HumanMessage
+        from langchain_core.messages import HumanMessage
         key = os.getenv("GROQ_API_KEY")
         if not key:
             return "AI bot not configured. Add GROQ_API_KEY to .env"
