@@ -21,8 +21,8 @@ class ConnectionManager:
     """
     Tracks all active WebSocket connections.
     One message -> broadcast() sends it to EVERYONE.
-    This is the core of real-time.
     """
+
     def __init__(self):
         self.connections: Dict[WebSocket, str] = {}
 
@@ -35,6 +35,7 @@ class ConnectionManager:
 
     async def broadcast(self, msg: dict):
         text = json.dumps(msg)
+
         for ws in list(self.connections.keys()):
             try:
                 await ws.send_text(text)
@@ -46,42 +47,68 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
+
 history: List[dict] = []
 
 
 async def ai_reply(question: str) -> str:
-    """Call Groq only if /ai command is used."""
+    """
+    Call Groq AI only when /ai command is used.
+    """
+
     try:
         from langchain_groq import ChatGroq
         from langchain_core.messages import HumanMessage
+
         key = os.getenv("GROQ_API_KEY")
+
         if not key:
             return "AI bot not configured. Add GROQ_API_KEY to .env"
-        llm = ChatGroq(groq_api_key=key, model_name="llama3-8b-8192", temperature=0.5)
-        res = llm.invoke([HumanMessage(content=question)])
-        return res.content[:500]
+
+        llm = ChatGroq(
+            groq_api_key=key,
+            model_name="llama-3.1-8b-instant",
+            temperature=0.5
+        )
+
+        response = llm.invoke(
+            [
+                HumanMessage(content=question)
+            ]
+        )
+
+        return response.content
+
     except Exception as e:
         return f"AI error: {str(e)}"
 
 
 @app.get("/")
 def root():
-    return {"status": "online", "users": len(manager.connections)}
+    return {
+        "status": "online",
+        "users": len(manager.connections)
+    }
 
 
 @app.get("/history")
 def get_history():
-    return {"messages": history[-50:]}
+    return {
+        "messages": history[-50:]
+    }
 
 
 @app.websocket("/ws/{username}")
 async def ws_endpoint(ws: WebSocket, username: str):
     """
-    Each user gets one persistent connection here.
-    1. Connect -> announce arrival to everyone
-    2. Loop: wait for message -> broadcast to everyone
-    3. Disconnect -> announce departure + clean up
+    WebSocket lifecycle:
+    1. Connect user
+    2. Announce join
+    3. Receive messages
+    4. Broadcast messages
+    5. Handle disconnect
     """
+
     await manager.connect(ws, username)
 
     await manager.broadcast({
@@ -103,15 +130,22 @@ async def ws_endpoint(ws: WebSocket, username: str):
                 "timestamp": datetime.now().strftime("%H:%M"),
                 "online": manager.online_users(),
             }
+
             history.append(msg)
+
             if len(history) > 50:
                 history.pop(0)
+
             await manager.broadcast(msg)
 
-            # AI bot trigger
+
+            # AI command: /ai question
             if data.strip().lower().startswith("/ai "):
+
                 question = data[4:].strip()
+
                 reply = await ai_reply(question)
+
                 bot_msg = {
                     "type": "message",
                     "content": reply,
@@ -119,11 +153,16 @@ async def ws_endpoint(ws: WebSocket, username: str):
                     "timestamp": datetime.now().strftime("%H:%M"),
                     "online": manager.online_users(),
                 }
+
                 history.append(bot_msg)
+
                 await manager.broadcast(bot_msg)
 
+
     except WebSocketDisconnect:
+
         name = manager.disconnect(ws)
+
         await manager.broadcast({
             "type": "system",
             "content": f"{name} left the chat",
